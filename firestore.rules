@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Links: Anyone can read, only authenticated users can write.
+    match /links/{linkId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+    
+    // Users: Anyone can read (to find profile by username), only the owner can write.
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}

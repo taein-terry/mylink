@@ -18,7 +18,10 @@ import {
   doc, 
   query, 
   orderBy,
-  updateDoc 
+  updateDoc,
+  where,
+  setDoc,
+  getDoc
 } from "firebase/firestore";
 
 export default function MyPage() {
@@ -26,10 +29,20 @@ export default function MyPage() {
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
+  const [username, setUsername] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // Edit State
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+
+  // Delete Confirmation Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [linkToDelete, setLinkToDelete] = useState<string | null>(null);
 
   // Auth State Listener
   useEffect(() => {
@@ -40,16 +53,28 @@ export default function MyPage() {
     return () => unsubscribe();
   }, []);
 
-  // Load links from Firestore on mount
+  // Load user profile and links
   useEffect(() => {
-    const fetchLinks = async () => {
+    const fetchData = async () => {
       if (!user) {
         setLinks([]);
+        setUsername("");
         return;
       }
       
       try {
-        const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
+        // 1. Fetch User Profile (for username)
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (userDoc.exists()) {
+          setUsername(userDoc.data().username || "");
+        }
+
+        // 2. Fetch User Links
+        const q = query(
+          collection(db, "links"), 
+          where("uid", "==", user.uid),
+          orderBy("createdAt", "asc")
+        );
         const querySnapshot = await getDocs(q);
         const fetchedLinks: LinkItem[] = [];
         querySnapshot.forEach((docSnapshot) => {
@@ -57,12 +82,12 @@ export default function MyPage() {
         });
         setLinks(fetchedLinks);
       } catch (error) {
-        console.error("Error fetching links: ", error);
+        console.error("Error fetching data: ", error);
         setErrorMsg("⚠️ 데이터를 불러오는 중 오류가 발생했습니다.");
       }
     };
 
-    fetchLinks();
+    fetchData();
   }, [user]);
 
   // Auth Actions
@@ -85,41 +110,51 @@ export default function MyPage() {
     }
   };
 
-  // Edit State
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-  const [editUrl, setEditUrl] = useState("");
+  // Profile Action
+  const handleSaveUsername = async () => {
+    if (!user) return;
+    if (!username.trim()) {
+      triggerToast("⚠️ 사용자 이름을 입력해 주세요.");
+      return;
+    }
 
-  // Delete Confirmation Modal State
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-  const [linkToDelete, setLinkToDelete] = useState<string | null>(null);
+    const cleanUsername = username.trim().toLowerCase();
+    if (!/^[a-z0-9_-]{3,15}$/.test(cleanUsername)) {
+      triggerToast("⚠️ 3~15자의 영문 소문자, 숫자, -, _만 가능합니다.");
+      return;
+    }
 
-  // Load links from Firestore on mount
-  useEffect(() => {
-    const fetchLinks = async () => {
-      try {
-        const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
-        const querySnapshot = await getDocs(q);
-        const fetchedLinks: LinkItem[] = [];
-        querySnapshot.forEach((docSnapshot) => {
-          fetchedLinks.push({ id: docSnapshot.id, ...docSnapshot.data() } as LinkItem);
-        });
-        setLinks(fetchedLinks);
-      } catch (error) {
-        console.error("Error fetching links: ", error);
-        setErrorMsg("⚠️ 데이터를 불러오는 중 오류가 발생했습니다.");
+    try {
+      // Check if username is taken by someone else
+      const q = query(collection(db, "users"), where("username", "==", cleanUsername));
+      const snapshot = await getDocs(q);
+      const isTaken = snapshot.docs.some(d => d.id !== user.uid);
+      
+      if (isTaken) {
+        triggerToast("⚠️ 이미 사용 중인 이름입니다.");
+        return;
       }
-    };
 
-    fetchLinks();
-  }, []);
+      await setDoc(doc(db, "users", user.uid), {
+        username: cleanUsername,
+        displayName: user.displayName,
+        email: user.email,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      triggerToast("✅ 사용자 이름이 설정되었습니다.");
+    } catch (error) {
+      console.error("Error saving username: ", error);
+      triggerToast("⚠️ 저장 중 오류가 발생했습니다.");
+    }
+  };
 
   // Validation and Create link action
   const handleAddLink = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     setErrorMsg(null);
 
-    // 1. Validation - Empty inputs check
     if (!title.trim()) {
       setErrorMsg("⚠️ 링크 제목을 입력해 주세요.");
       return;
@@ -129,22 +164,19 @@ export default function MyPage() {
       return;
     }
 
-    // 2. Validation - URL format check (simple regex for basic domain structure)
     const normalizedUrl = url.trim();
     const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i;
     
     if (!urlPattern.test(normalizedUrl)) {
-      setErrorMsg("⚠️ 유효한 URL 형식이 아닙니다. (예: example.com 또는 https://example.com)");
+      setErrorMsg("⚠️ 유효한 URL 형식이 아닙니다.");
       return;
     }
 
-    // Auto-normalize protocol: Prepend https:// if no protocol provided
     let finalUrl = normalizedUrl;
     if (!/^https?:\/\//i.test(normalizedUrl)) {
       finalUrl = `https://${normalizedUrl}`;
     }
 
-    // Auto-map icons based on URL/Title contents
     let detectedIcon: "instagram" | "youtube" | "blog" = "blog";
     const lowerTitle = title.toLowerCase();
     const lowerUrl = finalUrl.toLowerCase();
@@ -155,8 +187,8 @@ export default function MyPage() {
     }
 
     try {
-      // 3. Create link item in Firestore
       const docRef = await addDoc(collection(db, "links"), {
+        uid: user.uid,
         title: title.trim(),
         url: finalUrl,
         icon: detectedIcon,
@@ -170,10 +202,7 @@ export default function MyPage() {
         icon: detectedIcon,
       };
 
-      // 4. Update state
       setLinks([...links, newLink]);
-
-      // 5. Success state cleanup
       setTitle("");
       setUrl("");
       triggerToast("✨ 새 링크가 추가되었습니다!");
@@ -196,7 +225,6 @@ export default function MyPage() {
     setEditUrl("");
   };
 
-  // Update Link Action
   const handleUpdateLink = async (id: string) => {
     if (!editTitle.trim() || !editUrl.trim()) {
       triggerToast("⚠️ 모든 필드를 입력해 주세요.");
@@ -208,7 +236,6 @@ export default function MyPage() {
       finalUrl = `https://${finalUrl}`;
     }
 
-    // Auto-map icons based on URL/Title contents
     let detectedIcon: "instagram" | "youtube" | "blog" = "blog";
     const lowerTitle = editTitle.toLowerCase();
     const lowerUrl = finalUrl.toLowerCase();
@@ -240,7 +267,6 @@ export default function MyPage() {
     }
   };
 
-  // Delete Link Action with confirmation
   const confirmDelete = (id: string) => {
     setLinkToDelete(id);
     setIsDeleteModalOpen(true);
@@ -273,13 +299,11 @@ export default function MyPage() {
   return (
     <main className="flex-1 w-full min-h-screen flex flex-col justify-center items-center py-12 px-4 bg-[#f5f5f5] font-sans relative overflow-hidden select-none">
       
-      {/* Background Decorative Mesh Gradients */}
       <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-[#003C71]/5 blur-[80px] pointer-events-none" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full bg-teal-500/5 blur-[80px] pointer-events-none" />
 
       <div className="w-full max-w-[400px] flex flex-col gap-5 items-center relative z-10">
         
-        {/* Navigation Header */}
         <div className="w-full flex items-center justify-between px-1">
           <h1 className="text-lg font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
             <svg className="w-5 h-5 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
@@ -315,7 +339,6 @@ export default function MyPage() {
             <div className="w-6 h-6 border-2 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
           </div>
         ) : !user ? (
-          /* 🔐 LOGIN PROMPT CARD */
           <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-8 flex flex-col items-center text-center animate-scale-in">
             <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-6 border border-slate-100">
               <svg className="w-7 h-7 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
@@ -324,7 +347,6 @@ export default function MyPage() {
             </div>
             <h2 className="text-lg font-extrabold text-slate-800 mb-2">관리자 로그인</h2>
             <p className="text-slate-500 text-xs font-medium mb-8 leading-relaxed">링크를 관리하려면 로그인이 필요합니다.<br/>구글 계정으로 간편하게 시작하세요.</p>
-            
             <button 
               onClick={handleSignIn}
               className="w-full py-3.5 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-700 shadow-sm transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
@@ -336,24 +358,56 @@ export default function MyPage() {
             </button>
           </div>
         ) : (
-          /* 📝 AUTHENTICATED MANAGER CONTENT */
           <>
+            {/* 👤 PROFILE SETTINGS CARD */}
             <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-6">
-              
-              <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide mb-4">새 링크 추가</h2>
+              <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide mb-4">내 프로필 설정</h2>
+              <div className="flex flex-col gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">공개 페이지 주소</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 flex items-center bg-slate-50 border border-slate-200 rounded-lg px-3 overflow-hidden">
+                      <span className="text-[10px] font-bold text-slate-400 mr-1">/</span>
+                      <input 
+                        type="text" 
+                        placeholder="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="w-full py-2.5 bg-transparent text-xs font-semibold text-slate-700 focus:outline-none"
+                      />
+                    </div>
+                    <button 
+                      onClick={handleSaveUsername}
+                      className="px-4 bg-slate-900 text-white rounded-lg text-xs font-bold shadow-md hover:bg-slate-800 transition-all"
+                    >
+                      저장
+                    </button>
+                  </div>
+                  <p className="mt-1.5 text-[9px] text-slate-400 font-medium">영문 소문자, 숫자, -, _ 만 사용 가능합니다.</p>
+                  {username && (
+                    <Link 
+                      href={`/${username}`}
+                      target="_blank"
+                      className="mt-2 inline-flex items-center text-[10px] font-bold text-teal-600 hover:text-teal-700"
+                    >
+                      내 공개 페이지 보기 ↗
+                    </Link>
+                  )}
+                </div>
+              </div>
+            </div>
 
-              {/* Validation Warning Alert (shadcn-like style) */}
+            <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-6">
+              <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide mb-4">새 링크 추가</h2>
               {errorMsg && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200/60 rounded-lg flex items-start gap-2 animate-scale-in">
                   <span className="text-[11px] font-bold text-red-700 leading-relaxed">{errorMsg}</span>
                 </div>
               )}
-
               <form onSubmit={handleAddLink} className="space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 이름</label>
                   <input 
-                    id="link-title-input"
                     type="text" 
                     placeholder="예: 내 인스타그램"
                     value={title}
@@ -361,11 +415,9 @@ export default function MyPage() {
                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
                   />
                 </div>
-
                 <div>
                   <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 URL</label>
                   <input 
-                    id="link-url-input"
                     type="text" 
                     placeholder="예: instagram.com/username"
                     value={url}
@@ -373,9 +425,7 @@ export default function MyPage() {
                     className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
                   />
                 </div>
-
                 <button 
-                  id="add-link-btn"
                   type="submit"
                   className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all duration-300 active:scale-[0.98]"
                 >
@@ -384,10 +434,8 @@ export default function MyPage() {
               </form>
             </div>
 
-            {/* 📋 CURRENT LINKS MANAGER SECTION */}
             <div className="w-full flex flex-col gap-2.5 mt-1">
               <h2 className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider px-1">등록된 링크 목록 ({links.length})</h2>
-              
               <div className="space-y-2 w-full">
                 {links.length === 0 ? (
                   <div className="w-full bg-white border border-dashed border-slate-200 rounded-[12px] p-8 text-center text-xs font-bold text-slate-400">
@@ -400,7 +448,6 @@ export default function MyPage() {
                       className="w-full bg-white border border-slate-200/60 rounded-[12px] p-4 flex flex-col shadow-[0_2px_8px_rgba(0,0,0,0.01)] transition-all hover:border-slate-300"
                     >
                       {editingId === link.id ? (
-                        // INLINE EDIT MODE
                         <div className="w-full space-y-3 p-1">
                           <input 
                             type="text" 
@@ -420,46 +467,25 @@ export default function MyPage() {
                             <button 
                               onClick={() => handleUpdateLink(link.id)}
                               className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-bold shadow-sm"
-                            >
-                              저장
-                            </button>
+                            >저장</button>
                             <button 
                               onClick={cancelEditing}
                               className="flex-1 py-2 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-bold"
-                            >
-                              취소
-                            </button>
+                            >취소</button>
                           </div>
                         </div>
                       ) : (
-                        // VIEW MODE
                         <div className="flex items-center justify-between w-full">
                           <div className="flex flex-col gap-1 items-start text-left max-w-[220px]">
                             <span className="text-[12px] font-bold text-slate-700 tracking-wide truncate w-full">{link.title}</span>
                             <span className="text-[9px] font-medium text-slate-400 truncate w-full">{link.url}</span>
                           </div>
-
                           <div className="flex items-center gap-1">
-                            {/* Inline Edit Button */}
-                            <button
-                              onClick={() => startEditing(link)}
-                              className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all active:scale-[0.95]"
-                              title="수정"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                              </svg>
+                            <button onClick={() => startEditing(link)} className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all active:scale-[0.95]" title="수정">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
                             </button>
-
-                            {/* Delete Button */}
-                            <button
-                              onClick={() => confirmDelete(link.id)}
-                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]"
-                              title="삭제"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                              </svg>
+                            <button onClick={() => confirmDelete(link.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]" title="삭제">
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2"><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                             </button>
                           </div>
                         </div>
@@ -471,49 +497,27 @@ export default function MyPage() {
             </div>
           </>
         )}
-
       </div>
 
-      {/* Delete Confirmation Modal */}
       {isDeleteModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-4 z-[60] animate-fade-in">
           <div className="w-full max-w-[320px] bg-white rounded-2xl shadow-2xl p-6 border border-slate-100 flex flex-col items-center text-center animate-scale-in">
-            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4">
-              <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
+            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4"><svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></div>
             <h3 className="text-slate-800 font-extrabold text-base mb-2">링크 삭제 확인</h3>
             <p className="text-slate-500 text-xs font-medium mb-6 leading-relaxed">정말 이 링크를 삭제하시겠습니까?<br/>삭제된 데이터는 복구할 수 없습니다.</p>
-            
             <div className="flex gap-2 w-full">
-              <button 
-                onClick={() => setIsDeleteModalOpen(false)}
-                className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
-              >
-                취소
-              </button>
-              <button 
-                onClick={handleDeleteLink}
-                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-red-700 transition-all"
-              >
-                삭제하기
-              </button>
+              <button onClick={() => setIsDeleteModalOpen(false)} className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all">취소</button>
+              <button onClick={handleDeleteLink} className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-red-700 transition-all">삭제하기</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Success Toast */}
       {showToast && (
-        <div 
-          id="toast-notification"
-          className="fixed bottom-6 px-5 py-3 bg-slate-900 text-white rounded-full text-xs font-semibold shadow-xl border border-slate-800 flex items-center gap-2 z-50 animate-scale-in"
-        >
+        <div className="fixed bottom-6 px-5 py-3 bg-slate-900 text-white rounded-full text-xs font-semibold shadow-xl border border-slate-800 flex items-center gap-2 z-50 animate-scale-in">
           <span>{toastMessage}</span>
         </div>
       )}
-
     </main>
   );
 }
