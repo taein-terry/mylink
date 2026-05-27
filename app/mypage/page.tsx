@@ -11,7 +11,8 @@ import {
   deleteDoc, 
   doc, 
   query, 
-  orderBy 
+  orderBy,
+  updateDoc 
 } from "firebase/firestore";
 
 export default function MyPage() {
@@ -22,6 +23,15 @@ export default function MyPage() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
+  // Edit State
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editUrl, setEditUrl] = useState("");
+
+  // Delete Confirmation Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [linkToDelete, setLinkToDelete] = useState<string | null>(null);
+
   // Load links from Firestore on mount
   useEffect(() => {
     const fetchLinks = async () => {
@@ -29,8 +39,8 @@ export default function MyPage() {
         const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
         const querySnapshot = await getDocs(q);
         const fetchedLinks: LinkItem[] = [];
-        querySnapshot.forEach((doc) => {
-          fetchedLinks.push({ id: doc.id, ...doc.data() } as LinkItem);
+        querySnapshot.forEach((docSnapshot) => {
+          fetchedLinks.push({ id: docSnapshot.id, ...docSnapshot.data() } as LinkItem);
         });
         setLinks(fetchedLinks);
       } catch (error) {
@@ -111,12 +121,78 @@ export default function MyPage() {
     }
   };
 
-  // Delete Link Action
-  const handleDeleteLink = async (id: string) => {
+  // Inline Edit Toggle
+  const startEditing = (link: LinkItem) => {
+    setEditingId(link.id);
+    setEditTitle(link.title);
+    setEditUrl(link.url);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditTitle("");
+    setEditUrl("");
+  };
+
+  // Update Link Action
+  const handleUpdateLink = async (id: string) => {
+    if (!editTitle.trim() || !editUrl.trim()) {
+      triggerToast("⚠️ 모든 필드를 입력해 주세요.");
+      return;
+    }
+
+    let finalUrl = editUrl.trim();
+    if (!/^https?:\/\//i.test(finalUrl)) {
+      finalUrl = `https://${finalUrl}`;
+    }
+
+    // Auto-map icons based on URL/Title contents
+    let detectedIcon: "instagram" | "youtube" | "blog" = "blog";
+    const lowerTitle = editTitle.toLowerCase();
+    const lowerUrl = finalUrl.toLowerCase();
+    if (lowerTitle.includes("instagram") || lowerUrl.includes("instagram.com")) {
+      detectedIcon = "instagram";
+    } else if (lowerTitle.includes("youtube") || lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) {
+      detectedIcon = "youtube";
+    }
+
     try {
-      await deleteDoc(doc(db, "links", id));
-      const updated = links.filter((link) => link.id !== id);
+      const linkRef = doc(db, "links", id);
+      await updateDoc(linkRef, {
+        title: editTitle.trim(),
+        url: finalUrl,
+        icon: detectedIcon,
+      });
+
+      setLinks(links.map(link => 
+        link.id === id 
+          ? { ...link, title: editTitle.trim(), url: finalUrl, icon: detectedIcon } 
+          : link
+      ));
+      
+      setEditingId(null);
+      triggerToast("✅ 링크가 수정되었습니다.");
+    } catch (error) {
+      console.error("Error updating link: ", error);
+      triggerToast("⚠️ 수정 중 오류가 발생했습니다.");
+    }
+  };
+
+  // Delete Link Action with confirmation
+  const confirmDelete = (id: string) => {
+    setLinkToDelete(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleDeleteLink = async () => {
+    if (!linkToDelete) return;
+
+    try {
+      await deleteDoc(doc(db, "links", linkToDelete));
+      const updated = links.filter((link) => link.id !== linkToDelete);
       setLinks(updated);
+      setIsDeleteModalOpen(false);
+      setLinkToDelete(null);
       triggerToast("🗑️ 링크가 삭제되었습니다.");
     } catch (error) {
       console.error("Error deleting link: ", error);
@@ -223,24 +299,73 @@ export default function MyPage() {
               links.map((link) => (
                 <div 
                   key={link.id}
-                  className="w-full bg-white border border-slate-200/60 rounded-[12px] p-4 flex items-center justify-between shadow-[0_2px_8px_rgba(0,0,0,0.01)] transition-all hover:border-slate-300"
+                  className="w-full bg-white border border-slate-200/60 rounded-[12px] p-4 flex flex-col shadow-[0_2px_8px_rgba(0,0,0,0.01)] transition-all hover:border-slate-300"
                 >
-                  <div className="flex flex-col gap-1 items-start text-left max-w-[280px]">
-                    <span className="text-[12px] font-bold text-slate-700 tracking-wide truncate w-full">{link.title}</span>
-                    <span className="text-[9px] font-medium text-slate-400 truncate w-full">{link.url}</span>
-                  </div>
+                  {editingId === link.id ? (
+                    // INLINE EDIT MODE
+                    <div className="w-full space-y-3 p-1">
+                      <input 
+                        type="text" 
+                        value={editTitle}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-800 transition-all"
+                        placeholder="링크 이름"
+                      />
+                      <input 
+                        type="text" 
+                        value={editUrl}
+                        onChange={(e) => setEditUrl(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-500 focus:outline-none focus:border-slate-800 transition-all"
+                        placeholder="링크 URL"
+                      />
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleUpdateLink(link.id)}
+                          className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-bold shadow-sm"
+                        >
+                          저장
+                        </button>
+                        <button 
+                          onClick={cancelEditing}
+                          className="flex-1 py-2 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-bold"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    // VIEW MODE
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex flex-col gap-1 items-start text-left max-w-[220px]">
+                        <span className="text-[12px] font-bold text-slate-700 tracking-wide truncate w-full">{link.title}</span>
+                        <span className="text-[9px] font-medium text-slate-400 truncate w-full">{link.url}</span>
+                      </div>
 
-                  {/* Sleek shadcn style delete button */}
-                  <button
-                    id={`delete-link-btn-${link.id}`}
-                    onClick={() => handleDeleteLink(link.id)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]"
-                    title="삭제"
-                  >
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
+                      <div className="flex items-center gap-1">
+                        {/* Inline Edit Button */}
+                        <button
+                          onClick={() => startEditing(link)}
+                          className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all active:scale-[0.95]"
+                          title="수정"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+
+                        {/* Delete Button */}
+                        <button
+                          onClick={() => confirmDelete(link.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]"
+                          title="삭제"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -248,6 +373,36 @@ export default function MyPage() {
         </div>
 
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center p-4 z-[60] animate-fade-in">
+          <div className="w-full max-w-[320px] bg-white rounded-2xl shadow-2xl p-6 border border-slate-100 flex flex-col items-center text-center animate-scale-in">
+            <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center mb-4">
+              <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 className="text-slate-800 font-extrabold text-base mb-2">링크 삭제 확인</h3>
+            <p className="text-slate-500 text-xs font-medium mb-6 leading-relaxed">정말 이 링크를 삭제하시겠습니까?<br/>삭제된 데이터는 복구할 수 없습니다.</p>
+            
+            <div className="flex gap-2 w-full">
+              <button 
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="flex-1 py-2.5 bg-white border border-slate-200 text-slate-500 rounded-xl text-xs font-bold hover:bg-slate-50 transition-all"
+              >
+                취소
+              </button>
+              <button 
+                onClick={handleDeleteLink}
+                className="flex-1 py-2.5 bg-red-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-red-700 transition-all"
+              >
+                삭제하기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Floating Success Toast */}
       {showToast && (
