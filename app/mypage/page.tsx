@@ -3,7 +3,13 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { LinkItem } from "../data/links";
-import { db } from "../../lib/firebase";
+import { db, auth, googleProvider } from "../../lib/firebase";
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User 
+} from "firebase/auth";
 import { 
   collection, 
   addDoc, 
@@ -16,12 +22,68 @@ import {
 } from "firebase/firestore";
 
 export default function MyPage() {
+  const [user, setUser] = useState<User | null>(null);
   const [links, setLinks] = useState<LinkItem[]>([]);
   const [title, setTitle] = useState("");
   const [url, setUrl] = useState("");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  // Auth State Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setIsAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Load links from Firestore on mount
+  useEffect(() => {
+    const fetchLinks = async () => {
+      if (!user) {
+        setLinks([]);
+        return;
+      }
+      
+      try {
+        const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
+        const querySnapshot = await getDocs(q);
+        const fetchedLinks: LinkItem[] = [];
+        querySnapshot.forEach((docSnapshot) => {
+          fetchedLinks.push({ id: docSnapshot.id, ...docSnapshot.data() } as LinkItem);
+        });
+        setLinks(fetchedLinks);
+      } catch (error) {
+        console.error("Error fetching links: ", error);
+        setErrorMsg("⚠️ 데이터를 불러오는 중 오류가 발생했습니다.");
+      }
+    };
+
+    fetchLinks();
+  }, [user]);
+
+  // Auth Actions
+  const handleSignIn = async () => {
+    try {
+      await signInWithPopup(auth, googleProvider);
+      triggerToast("👋 반갑습니다!");
+    } catch (error) {
+      console.error("Login failed: ", error);
+      triggerToast("⚠️ 로그인에 실패했습니다.");
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut(auth);
+      triggerToast("🔒 로그아웃되었습니다.");
+    } catch (error) {
+      console.error("Logout failed: ", error);
+    }
+  };
 
   // Edit State
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -221,156 +283,194 @@ export default function MyPage() {
         <div className="w-full flex items-center justify-between px-1">
           <h1 className="text-lg font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
             <svg className="w-5 h-5 text-slate-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
             마이링크 관리자
           </h1>
           
-          {/* Back button link to main card view */}
-          <Link 
-            href="/" 
-            className="text-xs font-bold text-slate-500 hover:text-slate-900 border border-slate-200 bg-white rounded-lg px-3 py-1.5 shadow-sm transition-all flex items-center gap-1 active:scale-[0.98]"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-            홈으로
-          </Link>
-        </div>
-
-        {/* 📝 FORM CARD - Shadcn/ui Alert & Form Aesthetic */}
-        <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-6">
-          
-          <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide mb-4">새 링크 추가</h2>
-
-          {/* Validation Warning Alert (shadcn-like style) */}
-          {errorMsg && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200/60 rounded-lg flex items-start gap-2 animate-scale-in">
-              <span className="text-[11px] font-bold text-red-700 leading-relaxed">{errorMsg}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleAddLink} className="space-y-4">
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 이름</label>
-              <input 
-                id="link-title-input"
-                type="text" 
-                placeholder="예: 내 인스타그램"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 URL</label>
-              <input 
-                id="link-url-input"
-                type="text" 
-                placeholder="예: instagram.com/username"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
-              />
-            </div>
-
-            <button 
-              id="add-link-btn"
-              type="submit"
-              className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all duration-300 active:scale-[0.98]"
-            >
-              링크 추가하기
-            </button>
-          </form>
-        </div>
-
-        {/* 📋 CURRENT LINKS MANAGER SECTION */}
-        <div className="w-full flex flex-col gap-2.5 mt-1">
-          <h2 className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider px-1">등록된 링크 목록 ({links.length})</h2>
-          
-          <div className="space-y-2 w-full">
-            {links.length === 0 ? (
-              <div className="w-full bg-white border border-dashed border-slate-200 rounded-[12px] p-8 text-center text-xs font-bold text-slate-400">
-                등록된 링크가 없습니다. 새 링크를 추가해보세요!
-              </div>
-            ) : (
-              links.map((link) => (
-                <div 
-                  key={link.id}
-                  className="w-full bg-white border border-slate-200/60 rounded-[12px] p-4 flex flex-col shadow-[0_2px_8px_rgba(0,0,0,0.01)] transition-all hover:border-slate-300"
-                >
-                  {editingId === link.id ? (
-                    // INLINE EDIT MODE
-                    <div className="w-full space-y-3 p-1">
-                      <input 
-                        type="text" 
-                        value={editTitle}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-800 transition-all"
-                        placeholder="링크 이름"
-                      />
-                      <input 
-                        type="text" 
-                        value={editUrl}
-                        onChange={(e) => setEditUrl(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-500 focus:outline-none focus:border-slate-800 transition-all"
-                        placeholder="링크 URL"
-                      />
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleUpdateLink(link.id)}
-                          className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-bold shadow-sm"
-                        >
-                          저장
-                        </button>
-                        <button 
-                          onClick={cancelEditing}
-                          className="flex-1 py-2 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-bold"
-                        >
-                          취소
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    // VIEW MODE
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex flex-col gap-1 items-start text-left max-w-[220px]">
-                        <span className="text-[12px] font-bold text-slate-700 tracking-wide truncate w-full">{link.title}</span>
-                        <span className="text-[9px] font-medium text-slate-400 truncate w-full">{link.url}</span>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {/* Inline Edit Button */}
-                        <button
-                          onClick={() => startEditing(link)}
-                          className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all active:scale-[0.95]"
-                          title="수정"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-
-                        {/* Delete Button */}
-                        <button
-                          onClick={() => confirmDelete(link.id)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]"
-                          title="삭제"
-                        >
-                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))
+          <div className="flex items-center gap-2">
+            {user && (
+              <button 
+                onClick={handleSignOut}
+                className="text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-colors"
+              >
+                로그아웃
+              </button>
             )}
+            <Link 
+              href="/" 
+              className="text-xs font-bold text-slate-500 hover:text-slate-900 border border-slate-200 bg-white rounded-lg px-3 py-1.5 shadow-sm transition-all flex items-center gap-1 active:scale-[0.98]"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+              홈으로
+            </Link>
           </div>
         </div>
+
+        {isAuthLoading ? (
+          <div className="w-full bg-white rounded-[16px] border border-slate-100 p-12 flex items-center justify-center">
+            <div className="w-6 h-6 border-2 border-slate-200 border-t-slate-800 rounded-full animate-spin" />
+          </div>
+        ) : !user ? (
+          /* 🔐 LOGIN PROMPT CARD */
+          <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-8 flex flex-col items-center text-center animate-scale-in">
+            <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mb-6 border border-slate-100">
+              <svg className="w-7 h-7 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h2 className="text-lg font-extrabold text-slate-800 mb-2">관리자 로그인</h2>
+            <p className="text-slate-500 text-xs font-medium mb-8 leading-relaxed">링크를 관리하려면 로그인이 필요합니다.<br/>구글 계정으로 간편하게 시작하세요.</p>
+            
+            <button 
+              onClick={handleSignIn}
+              className="w-full py-3.5 bg-white border border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-xl text-xs font-bold text-slate-700 shadow-sm transition-all flex items-center justify-center gap-3 active:scale-[0.98]"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24">
+                <path fill="#EA4335" d="M12.48 10.92v3.28h7.84c-.24 1.84-.9 3.47-1.92 4.64-1.2 1.2-3.08 2.16-5.92 2.16-4.72 0-8.64-3.84-8.64-8.56s3.92-8.56 8.64-8.56c2.56 0 4.44.96 5.84 2.24l2.24-2.24C18.16 1.44 15.44 0 12.48 0 5.68 0 0 5.68 0 12.48s5.68 12.48 12.48 12.48c3.76 0 6.64-1.2 8.88-3.52 2.32-2.32 3.12-5.52 3.12-8.16 0-.8-.08-1.52-.16-2.24h-11.84z"/>
+              </svg>
+              Google로 시작하기
+            </button>
+          </div>
+        ) : (
+          /* 📝 AUTHENTICATED MANAGER CONTENT */
+          <>
+            <div className="w-full bg-white rounded-[16px] border border-slate-100 shadow-[0_15px_40px_rgba(0,0,0,0.04)] p-6">
+              
+              <h2 className="text-sm font-extrabold text-slate-800 uppercase tracking-wide mb-4">새 링크 추가</h2>
+
+              {/* Validation Warning Alert (shadcn-like style) */}
+              {errorMsg && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200/60 rounded-lg flex items-start gap-2 animate-scale-in">
+                  <span className="text-[11px] font-bold text-red-700 leading-relaxed">{errorMsg}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleAddLink} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 이름</label>
+                  <input 
+                    id="link-title-input"
+                    type="text" 
+                    placeholder="예: 내 인스타그램"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">링크 URL</label>
+                  <input 
+                    id="link-url-input"
+                    type="text" 
+                    placeholder="예: instagram.com/username"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-950/5 focus:border-slate-800 transition-all placeholder:text-slate-300"
+                  />
+                </div>
+
+                <button 
+                  id="add-link-btn"
+                  type="submit"
+                  className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-md hover:shadow-lg transition-all duration-300 active:scale-[0.98]"
+                >
+                  링크 추가하기
+                </button>
+              </form>
+            </div>
+
+            {/* 📋 CURRENT LINKS MANAGER SECTION */}
+            <div className="w-full flex flex-col gap-2.5 mt-1">
+              <h2 className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider px-1">등록된 링크 목록 ({links.length})</h2>
+              
+              <div className="space-y-2 w-full">
+                {links.length === 0 ? (
+                  <div className="w-full bg-white border border-dashed border-slate-200 rounded-[12px] p-8 text-center text-xs font-bold text-slate-400">
+                    등록된 링크가 없습니다. 새 링크를 추가해보세요!
+                  </div>
+                ) : (
+                  links.map((link) => (
+                    <div 
+                      key={link.id}
+                      className="w-full bg-white border border-slate-200/60 rounded-[12px] p-4 flex flex-col shadow-[0_2px_8px_rgba(0,0,0,0.01)] transition-all hover:border-slate-300"
+                    >
+                      {editingId === link.id ? (
+                        // INLINE EDIT MODE
+                        <div className="w-full space-y-3 p-1">
+                          <input 
+                            type="text" 
+                            value={editTitle}
+                            onChange={(e) => setEditTitle(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:outline-none focus:border-slate-800 transition-all"
+                            placeholder="링크 이름"
+                          />
+                          <input 
+                            type="text" 
+                            value={editUrl}
+                            onChange={(e) => setEditUrl(e.target.value)}
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-500 focus:outline-none focus:border-slate-800 transition-all"
+                            placeholder="링크 URL"
+                          />
+                          <div className="flex gap-2">
+                            <button 
+                              onClick={() => handleUpdateLink(link.id)}
+                              className="flex-1 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-bold shadow-sm"
+                            >
+                              저장
+                            </button>
+                            <button 
+                              onClick={cancelEditing}
+                              className="flex-1 py-2 bg-white border border-slate-200 text-slate-500 rounded-lg text-[10px] font-bold"
+                            >
+                              취소
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        // VIEW MODE
+                        <div className="flex items-center justify-between w-full">
+                          <div className="flex flex-col gap-1 items-start text-left max-w-[220px]">
+                            <span className="text-[12px] font-bold text-slate-700 tracking-wide truncate w-full">{link.title}</span>
+                            <span className="text-[9px] font-medium text-slate-400 truncate w-full">{link.url}</span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            {/* Inline Edit Button */}
+                            <button
+                              onClick={() => startEditing(link)}
+                              className="p-2 text-slate-400 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-all active:scale-[0.95]"
+                              title="수정"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+
+                            {/* Delete Button */}
+                            <button
+                              onClick={() => confirmDelete(link.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all active:scale-[0.95]"
+                              title="삭제"
+                            >
+                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
       </div>
 
