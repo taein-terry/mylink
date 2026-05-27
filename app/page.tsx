@@ -3,6 +3,13 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { linksData, LinkItem } from "./data/links";
+import { db } from "../lib/firebase";
+import { 
+  collection, 
+  getDocs, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
 
 export default function Home() {
   // State for study timer
@@ -15,7 +22,7 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
 
-  // State for links loaded dynamically from localStorage
+  // State for links loaded dynamically from Firestore
   const [links, setLinks] = useState<LinkItem[]>([]);
 
   // State for message modal
@@ -27,18 +34,40 @@ export default function Home() {
     { name: "동기", text: "태인아 25학번 동기 화이팅하자! 🔥", date: "1시간 전" }
   ]);
 
-  // Load links dynamically on mount
+  // Load links dynamically from Firestore on mount
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("mylink_links");
-      if (stored) {
-        setLinks(JSON.parse(stored));
-      } else {
-        localStorage.setItem("mylink_links", JSON.stringify(linksData));
-        setLinks(linksData);
+    const fetchLinks = async () => {
+      try {
+        const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
+        const querySnapshot = await getDocs(q);
+        const fetchedLinks: LinkItem[] = [];
+        querySnapshot.forEach((doc) => {
+          fetchedLinks.push({ id: doc.id, ...doc.data() } as LinkItem);
+        });
+        
+        // Fallback to static data if Firestore is empty
+        if (fetchedLinks.length === 0) {
+          setLinks(linksData);
+        } else {
+          setLinks(fetchedLinks);
+        }
+      } catch (error) {
+        console.error("Error fetching links: ", error);
+        setLinks(linksData); // Fallback on error
       }
-    }
+    };
+
+    fetchLinks();
   }, []);
+
+  // Toast trigger utility
+  const triggerToast = (message: string) => {
+    setToastMessage(message);
+    setShowToast(true);
+    setTimeout(() => {
+      setShowToast(false);
+    }, 3000);
+  };
 
   // Timer logic
   useEffect(() => {
@@ -82,15 +111,6 @@ export default function Home() {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  // Toast trigger utility
-  const triggerToast = (message: string) => {
-    setToastMessage(message);
-    setShowToast(true);
-    setTimeout(() => {
-      setShowToast(false);
-    }, 3000);
   };
 
   // Copy link to clipboard

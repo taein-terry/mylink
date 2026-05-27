@@ -2,7 +2,17 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { linksData, LinkItem } from "../data/links";
+import { LinkItem } from "../data/links";
+import { db } from "../../lib/firebase";
+import { 
+  collection, 
+  addDoc, 
+  getDocs, 
+  deleteDoc, 
+  doc, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
 
 export default function MyPage() {
   const [links, setLinks] = useState<LinkItem[]>([]);
@@ -12,21 +22,28 @@ export default function MyPage() {
   const [showToast, setShowToast] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
 
-  // Safely load links from localStorage on mount
+  // Load links from Firestore on mount
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = localStorage.getItem("mylink_links");
-      if (stored) {
-        setLinks(JSON.parse(stored));
-      } else {
-        localStorage.setItem("mylink_links", JSON.stringify(linksData));
-        setLinks(linksData);
+    const fetchLinks = async () => {
+      try {
+        const q = query(collection(db, "links"), orderBy("createdAt", "asc"));
+        const querySnapshot = await getDocs(q);
+        const fetchedLinks: LinkItem[] = [];
+        querySnapshot.forEach((doc) => {
+          fetchedLinks.push({ id: doc.id, ...doc.data() } as LinkItem);
+        });
+        setLinks(fetchedLinks);
+      } catch (error) {
+        console.error("Error fetching links: ", error);
+        setErrorMsg("⚠️ 데이터를 불러오는 중 오류가 발생했습니다.");
       }
-    }
+    };
+
+    fetchLinks();
   }, []);
 
   // Validation and Create link action
-  const handleAddLink = (e: React.FormEvent) => {
+  const handleAddLink = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -65,31 +82,46 @@ export default function MyPage() {
       detectedIcon = "youtube";
     }
 
-    // 3. Create link item
-    const newLink: LinkItem = {
-      id: Date.now().toString(),
-      title: title.trim(),
-      url: finalUrl,
-      icon: detectedIcon,
-    };
+    try {
+      // 3. Create link item in Firestore
+      const docRef = await addDoc(collection(db, "links"), {
+        title: title.trim(),
+        url: finalUrl,
+        icon: detectedIcon,
+        createdAt: new Date().toISOString(),
+      });
 
-    // 4. Save to state and localStorage
-    const updatedLinks = [...links, newLink];
-    setLinks(updatedLinks);
-    localStorage.setItem("mylink_links", JSON.stringify(updatedLinks));
+      const newLink: LinkItem = {
+        id: docRef.id,
+        title: title.trim(),
+        url: finalUrl,
+        icon: detectedIcon,
+      };
 
-    // 5. Success state cleanup
-    setTitle("");
-    setUrl("");
-    triggerToast("✨ 새 링크가 추가되었습니다!");
+      // 4. Update state
+      setLinks([...links, newLink]);
+
+      // 5. Success state cleanup
+      setTitle("");
+      setUrl("");
+      triggerToast("✨ 새 링크가 추가되었습니다!");
+    } catch (error) {
+      console.error("Error adding link: ", error);
+      setErrorMsg("⚠️ 링크를 추가하는 중 오류가 발생했습니다.");
+    }
   };
 
   // Delete Link Action
-  const handleDeleteLink = (id: string) => {
-    const updated = links.filter((link) => link.id !== id);
-    setLinks(updated);
-    localStorage.setItem("mylink_links", JSON.stringify(updated));
-    triggerToast("🗑️ 링크가 삭제되었습니다.");
+  const handleDeleteLink = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, "links", id));
+      const updated = links.filter((link) => link.id !== id);
+      setLinks(updated);
+      triggerToast("🗑️ 링크가 삭제되었습니다.");
+    } catch (error) {
+      console.error("Error deleting link: ", error);
+      triggerToast("⚠️ 삭제 중 오류가 발생했습니다.");
+    }
   };
 
   const triggerToast = (message: string) => {
