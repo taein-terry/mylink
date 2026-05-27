@@ -63,7 +63,7 @@ export default function PublicProfile() {
           return;
         }
 
-        const userData = userSnapshot.docs[0].data();
+        const userData = userSnapshot.docs[0].data() as UserProfile;
         const uid = userSnapshot.docs[0].id;
         setProfile(userData);
 
