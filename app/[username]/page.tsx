@@ -9,7 +9,10 @@ import {
   query, 
   where, 
   orderBy,
-  limit
+  limit,
+  doc,
+  updateDoc,
+  increment
 } from "firebase/firestore";
 import { LinkItem } from "../data/links";
 import Link from "next/link";
@@ -28,6 +31,18 @@ export default function PublicProfile() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Click Tracking Function
+  const handleLinkClick = async (linkId: string) => {
+    try {
+      const linkRef = doc(db, "links", linkId);
+      await updateDoc(linkRef, {
+        clicks: increment(1)
+      });
+    } catch (err) {
+      console.error("Error tracking click:", err);
+    }
+  };
 
   useEffect(() => {
     const fetchPublicData = async () => {
@@ -166,6 +181,7 @@ export default function PublicProfile() {
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
+                onClick={() => handleLinkClick(link.id)}
                 className="group w-full bg-white border border-slate-200/60 rounded-[12px] px-5 py-4 flex items-center justify-between shadow-[0_4px_12px_rgba(0,0,0,0.02)] transition-all duration-300 hover:bg-slate-50 hover:border-slate-300 hover:shadow-[0_8px_16px_rgba(0,0,0,0.05)] active:scale-[0.99]"
               >
                 <div className="flex items-center gap-3.5">

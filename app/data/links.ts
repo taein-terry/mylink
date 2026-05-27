@@ -3,6 +3,7 @@ export interface LinkItem {
   title: string;
   url: string;
   icon: "instagram" | "youtube" | "blog";
+  clicks?: number;
 }
 
 export const linksData: LinkItem[] = [
