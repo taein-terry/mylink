@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { linksData, LinkItem } from "./data/links";
 
 export default function Home() {
@@ -14,6 +15,9 @@ export default function Home() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showToast, setShowToast] = useState(false);
 
+  // State for links loaded dynamically from localStorage
+  const [links, setLinks] = useState<LinkItem[]>([]);
+
   // State for message modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [visitorName, setVisitorName] = useState("");
@@ -22,6 +26,19 @@ export default function Home() {
     { name: "선배", text: "의예과 입학을 축하합니다! 멋진 의사가 되시길 바랍니다.", date: "5분 전" },
     { name: "동기", text: "태인아 25학번 동기 화이팅하자! 🔥", date: "1시간 전" }
   ]);
+
+  // Load links dynamically on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("mylink_links");
+      if (stored) {
+        setLinks(JSON.parse(stored));
+      } else {
+        localStorage.setItem("mylink_links", JSON.stringify(linksData));
+        setLinks(linksData);
+      }
+    }
+  }, []);
 
   // Timer logic
   useEffect(() => {
@@ -145,6 +162,21 @@ export default function Home() {
       {/* Outer wrapper keeping central alignment and vertical stacking */}
       <div className="w-full max-w-[400px] flex flex-col gap-4 items-center">
         
+        {/* Floating Settings/Admin gear button on top-right of layout */}
+        <div className="w-full flex justify-end px-1 mb-1">
+          <Link 
+            href="/mypage" 
+            className="text-xs font-bold text-slate-500 hover:text-slate-900 border border-slate-200/80 bg-white rounded-lg px-3 py-1.5 shadow-sm transition-all flex items-center gap-1 active:scale-[0.98]"
+            title="마이링크 관리자"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            관리
+          </Link>
+        </div>
+
         {/* Main Profile Card Container */}
         <div 
           id="profile-card"
@@ -290,34 +322,40 @@ export default function Home() {
           id="links-directory"
           className="w-full flex flex-col gap-2.5 animate-fade-in-up mt-1"
         >
-          {linksData.map((link) => (
-            <a 
-              key={link.id}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group w-full bg-white border border-slate-200/60 rounded-[12px] px-5 py-4 flex items-center justify-between shadow-[0_4px_12px_rgba(0,0,0,0.02)] transition-all duration-300 hover:bg-slate-50 hover:border-slate-300 hover:shadow-[0_8px_16px_rgba(0,0,0,0.05)] active:scale-[0.99] cursor-pointer"
-            >
-              <div className="flex items-center gap-3.5">
-                {/* Modern Brand Icon Container with subtle animation wrapper */}
-                <div className="w-9 h-9 rounded-lg bg-slate-50 flex items-center justify-center border border-slate-100 group-hover:bg-white transition-colors duration-300">
-                  {renderLinkIcon(link.icon)}
+          {links.length === 0 ? (
+            <div className="w-full bg-white border border-slate-200/60 rounded-[12px] p-6 text-center text-xs font-bold text-slate-400">
+              표시할 링크가 없습니다. [관리] 메뉴에서 링크를 추가해보세요!
+            </div>
+          ) : (
+            links.map((link) => (
+              <a 
+                key={link.id}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group w-full bg-white border border-slate-200/60 rounded-[12px] px-5 py-4 flex items-center justify-between shadow-[0_4px_12px_rgba(0,0,0,0.02)] transition-all duration-300 hover:bg-slate-50 hover:border-slate-300 hover:shadow-[0_8px_16px_rgba(0,0,0,0.05)] active:scale-[0.99] cursor-pointer"
+              >
+                <div className="flex items-center gap-3.5">
+                  {/* Modern Brand Icon Container */}
+                  <div className="w-9 h-9 rounded-lg bg-slate-50 flex items-center justify-center border border-slate-100 group-hover:bg-white transition-colors duration-300">
+                    {renderLinkIcon(link.icon)}
+                  </div>
+                  
+                  {/* Title */}
+                  <span className="text-[13px] font-bold text-slate-700 tracking-wide group-hover:text-slate-900 transition-colors">
+                    {link.title}
+                  </span>
                 </div>
                 
-                {/* Title */}
-                <span className="text-[13px] font-bold text-slate-700 tracking-wide group-hover:text-slate-900 transition-colors">
-                  {link.title}
-                </span>
-              </div>
-              
-              {/* Sleek External Link Icon */}
-              <div className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-all duration-300 transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
-                <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" className="w-4 h-4">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
-                </svg>
-              </div>
-            </a>
-          ))}
+                {/* Sleek External Link Icon */}
+                <div className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-all duration-300 transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
+                  <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                  </svg>
+                </div>
+              </a>
+            ))
+          )}
         </section>
 
         {/* Footer Brand info */}
